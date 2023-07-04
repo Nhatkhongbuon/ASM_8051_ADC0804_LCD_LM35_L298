@@ -1,0 +1,314 @@
+;------------------------------------	
+;---LCD CONNECTION---
+;------------------------------------	
+LCD_DATA_PORT 	EQU	P0
+RS		BIT	P3.6
+EN 		BIT	P3.7
+;------------------------------------	
+;---ADC CONNECTION---
+;------------------------------------	
+ADC_DATA_PORT 	EQU	P2
+READ	BIT P1.0
+WRITE	BIT P1.1
+INTR	BIT P1.2
+CS		BIT P1.3
+;------------------------------------
+;---L298N CONNECTION---
+;------------------------------------
+PWM_OUT	BIT P1.5 ;(EN)
+IN1		BIT P1.6
+IN2		BIT P1.7
+BUTTON_0	BIT P3.0
+BUTTON_1	BIT	P3.1
+;---DEFINE DATA---
+;------------------------------------	
+DELAY_VALUE  	DATA 1
+PWM_DUTY	 	DATA 50
+COUNT_INT	 	EQU  R4
+ADC_DATA_REG	EQU R0
+;------------------------------------
+;---USED R0, R1, R2, R3, R4
+;--- R1, R2, R3 USE FOR DELAY FUNCTION---
+ORG 00H
+	LJMP MAIN
+;------------------------------------
+ORG 1BH
+	LJMP TIMER1_ISR
+;====================================
+;---MAIN---
+;====================================
+ORG 50H
+	
+MAIN:
+	LCALL 	LCD_INIT			;START LCD
+	MOV		DPTR, #TEM			;PRINT TEMPRATURE
+	LCALL 	PRINT_STRING
+	
+	SETB	EA					;ENABLE INTERRUPT
+	SETB	ET1					;TURN ON TIMER1 OVERFLOW INTERRUPT
+	MOV		TMOD, #20H			;SET TIMER 1 MODE 16BIT
+	MOV		TL1, #00H
+	MOV		TH1, #00H
+	SETB	TR1					;START TIMER1
+	
+	CLR		IN1					;SETTING THE ROTATION DIRECTION OF THE MOTOR
+	SETB	IN2
+;------------------------------------
+;--- CHECK BUTTON 0 PRESSED--- 
+BUTTON0_0:
+	JB		BUTTON_0, BUTTON1_0
+	MOV		DPTR, #TEM			;PRINT TEMPRATURE
+	LCALL 	PRINT_STRING
+	MOV		PWM_DUTY, #50		;SETTING SPEED OF MOTOR
+	MOV		A, #0
+	LCALL	GOTOLINE2 			;PRINT DC MOTOR MODE
+	MOV		DPTR, #SPACE
+	LCALL	PRINT_STRING
+	MOV		A, #2
+	LCALL	GOTOLINE2 
+	MOV		DPTR, #DC_MODE_0
+	LCALL	PRINT_STRING
+BUTTON0_1:
+	JB		BUTTON_0, BUTTON1_0
+	LCALL	PRINT_TEM
+	SJMP	BUTTON0_1
+;------------------------------------
+;--- CHECK BUTTON 1 PRESSED--- 
+BUTTON1_0:
+	JB		BUTTON_1, BUTTON_RL
+	MOV		DPTR, #TEM			;PRINT TEMPRATURE
+	LCALL 	PRINT_STRING
+	MOV		PWM_DUTY, #75		;SETTING SPEED OF MOTOR
+	MOV		A, #0
+	LCALL	GOTOLINE2 			;PRINT DC MOTOR MODE
+	MOV		DPTR, #SPACE
+	LCALL	PRINT_STRING
+	MOV		A, #2
+	LCALL	GOTOLINE2 
+	MOV		DPTR, #DC_MODE_1
+	LCALL	PRINT_STRING
+BUTTON1_1:
+	JB		BUTTON_1, BUTTON_RL
+	LCALL	PRINT_TEM
+	SJMP	BUTTON1_1
+;------------------------------------
+;---IF ALL BUTTON RELEASE--- 
+BUTTON_RL:
+	MOV		DPTR, #TEM			;PRINT TEMPRATURE
+	LCALL 	PRINT_STRING
+	MOV 	A, #0
+	LCALL	GOTOLINE2 			;PRINT DC MOTOR MODE
+	MOV		DPTR, #SPACE
+	LCALL	PRINT_STRING
+	MOV		A, #2
+	LCALL	GOTOLINE2 
+	MOV		DPTR, #DC_AUTO_MODE
+	LCALL	PRINT_STRING
+	
+	
+	WHILE:
+	JNB 	BUTTON_0, BUTTON0_0
+	JNB		BUTTON_1, BUTTON1_0  
+	LCALL	ADC_READ_DATA
+	MOV		PWM_DUTY, ADC_DATA_REG
+	LCALL	PRINT_TEM
+	
+	SJMP	WHILE
+;------------------------------------
+;---PRINT TEMP FUNCTION---
+PRINT_TEM:
+	MOV		A, #11
+	LCALL	GOTOLINE1
+	LCALL 	ADC_READ_DATA
+	LCALL	ADC_PRINT_DATA
+	LCALL	DELAY_50US
+	MOV		A, 200
+	LCALL	DELAY_MS
+	RET
+;------------------------------------
+;---TIMER 1 INTERRUPT SERVICE ROUTINE---
+TIMER1_ISR:
+	CLR		TF1
+	CLR 	TR1
+	INC 	COUNT_INT
+	CJNE 	COUNT_INT, #100, NT_0
+	MOV		COUNT_INT, #0
+	NT_0:
+	MOV		A, COUNT_INT
+	CJNE	A, PWM_DUTY, NT_1
+	NT_1:
+	MOV		PWM_OUT, C
+	SETB 	TR1
+	RETI
+;------------------------------------	
+;---PRINT STRING: ---
+	PRINT_STRING:
+	CLR 	A
+	MOVC 	A, @A+DPTR
+	JZ 		END_PRINT
+	LCALL 	LCD_WRITE_DATA
+	LCALL 	DELAY_50US
+	INC 	DPTR
+	SJMP 	PRINT_STRING
+	END_PRINT:
+	RET
+
+;------------------------------------	
+;---DEFINE STRING: ---
+	SPACE:
+	DB "                   "
+	DB 0
+		
+	DC_AUTO_MODE:
+	DB "DC AUTO MODE"
+	DB 0
+	
+	DC_MODE_0:
+	DB "DC MODE 50%"
+	DB 0
+		
+	DC_MODE_1:
+	DB "DC MODE 75%"
+	DB 0
+		
+	TEM:
+	DB "TEMPRATURE:"
+	DB 0
+;====================================
+;---ADC READ, PRINT DATA---
+;====================================
+
+ADC_READ_DATA:
+	MOV		ADC_DATA_PORT, #0FFH			;SET P2 IS INPUT PORT
+	SETB	READ
+	CLR		CS
+	CLR		WRITE
+	SETB 	WRITE							;START READ DATA
+	JB 		INTR, $							;WAIT 
+	CLR		READ							;ACCEPT READ DATA
+	MOV 	ADC_DATA_REG, ADC_DATA_PORT		;STORE DATA TO P0
+	RET
+
+;------------------------------------	
+ADC_PRINT_DATA:
+	;------------------
+	;XU LY SO HANG TRAM
+	ACALL	ADC_READ_DATA
+	MOV		A, ADC_DATA_REG			;STORE DATA TO A REG
+	MOV		B, #100
+	DIV		AB
+	ADD		A, #'0'
+	ACALL	LCD_WRITE_DATA
+	ACALL	DELAY_50US
+	;------------------
+	;XU LY SO HANG CHUC
+	MOV		A, B					;STORE DATA TO A REG
+	MOV		B, #10
+	DIV		AB
+	ADD		A, #'0'
+	ACALL	LCD_WRITE_DATA
+	ACALL	DELAY_50US
+	;------------------
+	;XU LY SO HANG DON VI
+	MOV 	A, B
+	ADD		A, #'0'
+	ACALL	LCD_WRITE_DATA
+	ACALL	DELAY_50US
+		
+	MOV 	A, #11011111B
+	LCALL 	LCD_WRITE_DATA
+	LCALL 	DELAY_50US
+	
+	MOV 	A, #'C'
+	LCALL 	LCD_WRITE_DATA
+	LCALL 	DELAY_50US
+	RET
+;====================================
+;	LCD INTERFACING CODE IN 8BIT MODE
+;====================================
+;-------LCD FUNCTION-------
+;---RS = 0 -> WRTIE INSTRUCTION
+;---RS = 1 -> WRITE DATA
+;---RW = 1 -> READ DATA
+;---RW = 0 -> WRITE DATA
+;---IN THIS CASE, RW ALWAYS = 0
+;-------------------------------------
+LCD_INIT:
+	MOV		A,#38H		;THIS COMMAND TELLS LCD TO INITIALIZE 5x7 2LINE
+	ACALL 	LCD_WRITE_CMD
+	ACALL 	DELAY_50US
+	MOV		A,#0CH		;DISPLAY ON, CURSOR OFF
+	ACALL 	LCD_WRITE_CMD
+	ACALL 	DELAY_50US
+	RET
+;-------------------------------------
+LCD_CLR:
+	;CLEAR ALL CHARACTERS FROM LCD DISPLAY
+	MOV		A,#0H
+	ACALL 	LCD_WRITE_DATA
+	RET
+;-------------------------------------
+;---SENT INSTRUOTION TO LCD---
+LCD_WRITE_CMD:
+	;THIS FUNCTION WILL PUT COMMAND 
+	;INTO LCD's COMMAND REGISTER
+	MOV		LCD_DATA_PORT,A
+	CLR		RS
+	SETB	EN
+	ACALL	DELAY_50US
+	CLR		EN
+	RET	
+;-------------------------------------	
+;---PRINT ON LCD---
+LCD_WRITE_DATA:
+	MOV		LCD_DATA_PORT,A
+	SETB	RS
+	SETB	EN
+	ACALL	DELAY_50US
+	CLR		EN
+	RET	
+;-------------------------------------	
+;-----------1   2   3   4  ... 16
+;HANG 1----80H 81H 82H 83H ... 8FH
+;HANG 2----C0H C1H C2H C3H ... CFH
+;FUNCTION DUA CON TRO DEN HANG 1
+GOTOLINE1: 
+	CLR RS				;MODE WRITE INSTRUCTION
+	ADD 	A, #80H
+	LCALL 	LCD_WRITE_CMD
+	LCALL 	DELAY_50US 
+	SETB 	RS
+	RET
+;-------------------------------------	
+;FUNCTION DUA CON TRO DEN HANG 2
+GOTOLINE2:
+	CLR 	RS			;MODE WRITE INSTRUCTION
+	ADD 	A, #0C0H
+	LCALL 	LCD_WRITE_CMD
+	LCALL 	DELAY_50US 
+	SETB 	RS
+	RET
+;===================================
+;---DELAY FUNCTION---
+;===================================
+DELAY_50US:
+	MOV R1, #50
+	LOOP1:
+	DJNZ R1, LOOP1
+	RET
+	
+DELAY_1MS:
+	MOV 	R2, #20
+	LOOP2: 
+	ACALL 	DELAY_50US 
+	DJNZ 	R2, LOOP2
+	RET
+	
+DELAY_MS:
+	MOV 	R3, DELAY_VALUE 
+	LOOP3:
+	ACALL 	DELAY_1MS 
+	DJNZ 	R3, LOOP3
+	RET
+	
+END
